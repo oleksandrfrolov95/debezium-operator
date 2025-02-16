@@ -123,8 +123,8 @@ func main() {
 	}
 
 	if err = (&controller.DebeziumConnectorReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:     mgr.GetClient(),
+		HTTPClient: mgr.GetHTTPClient(),
 	}).SetupWithManager(mgr); err != nil {
 		setupLog.Error(err, "unable to create controller", "controller", "DebeziumConnector")
 		os.Exit(1)

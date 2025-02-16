@@ -18,6 +18,7 @@ package controller
 
 import (
 	"context"
+	"net/http"
 
 	. "github.com/onsi/ginkgo/v2"
 	. "github.com/onsi/gomega"
@@ -69,8 +70,8 @@ var _ = Describe("DebeziumConnector Controller", func() {
 		It("should successfully reconcile the resource", func() {
 			By("Reconciling the created resource")
 			controllerReconciler := &DebeziumConnectorReconciler{
-				Client: k8sClient,
-				Scheme: k8sClient.Scheme(),
+				Client:     k8sClient,
+				HTTPClient: http.DefaultClient,
 			}
 
 			_, err := controllerReconciler.Reconcile(ctx, reconcile.Request{
