@@ -19,6 +19,7 @@ package controller
 import (
 	"context"
 
+	"k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -38,9 +39,18 @@ type DebeziumConnectorReconciler struct {
 //+kubebuilder:rbac:groups=api.debezium,resources=debeziumconnectors/finalizers,verbs=update
 
 func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	_ = log.FromContext(ctx)
+	logger := log.FromContext(ctx)
+	logger.Info("Reconciling DebeziumConnector")
 
-	// TODO(user): your logic here
+	debeziumConnector := &apiv1alpha1.DebeziumConnector{}
+	if err := r.Get(ctx, req.NamespacedName, debeziumConnector); err != nil {
+		if errors.IsNotFound(err) {
+			logger.Info("DebeziumConnector resource not found; it may have been deleted.")
+			return ctrl.Result{}, nil
+		}
+		logger.Error(err, "Failed to get DebeziumConnector")
+		return ctrl.Result{}, err
+	}
 
 	return ctrl.Result{}, nil
 }

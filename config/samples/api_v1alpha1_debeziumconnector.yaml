@@ -5,4 +5,15 @@ metadata:
     app.kubernetes.io/name: debezium-operator
   name: debeziumconnector-sample
 spec:
-  # TODO(user): Add fields here
+  debeziumHost: debezium.local
+  config:
+    name: my-connector
+    connector.class: io.debezium.connector.mysql.MySqlConnector
+    tasks.max: "1"
+    database.hostname: mysql
+    database.port: "3306"
+    database.user: debezium
+    database.password: dbz
+    database.server.id: "184054"
+    database.server.name: my-app-connector
+    database.include.list: mydb
