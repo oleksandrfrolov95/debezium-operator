@@ -1,0 +1,8 @@
+apiVersion: api.debezium/v1alpha1
+kind: DebeziumConnector
+metadata:
+  labels:
+    app.kubernetes.io/name: debezium-operator
+  name: debeziumconnector-sample
+spec:
+  # TODO(user): Add fields here

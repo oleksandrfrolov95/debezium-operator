@@ -1,0 +1,26 @@
+# permissions for end users to edit debeziumconnectors.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: debezium-operator
+  name: debeziumconnector-editor-role
+rules:
+- apiGroups:
+  - api.debezium
+  resources:
+  - debeziumconnectors
+  verbs:
+  - create
+  - delete
+  - get
+  - list
+  - patch
+  - update
+  - watch
+- apiGroups:
+  - api.debezium
+  resources:
+  - debeziumconnectors/status
+  verbs:
+  - get

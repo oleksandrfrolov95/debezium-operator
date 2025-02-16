@@ -1,0 +1,22 @@
+# permissions for end users to view debeziumconnectors.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  labels:
+    app.kubernetes.io/name: debezium-operator
+  name: debeziumconnector-viewer-role
+rules:
+- apiGroups:
+  - api.debezium
+  resources:
+  - debeziumconnectors
+  verbs:
+  - get
+  - list
+  - watch
+- apiGroups:
+  - api.debezium
+  resources:
+  - debeziumconnectors/status
+  verbs:
+  - get
