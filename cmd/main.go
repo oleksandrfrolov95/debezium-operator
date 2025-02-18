@@ -130,6 +130,11 @@ func main() {
 		setupLog.Error(err, "unable to create controller", "controller", "DebeziumConnector")
 		os.Exit(1)
 	}
+	// Register the webhook for DebeziumConnector.
+	if err := (&apiv1alpha1.DebeziumConnector{}).SetupWebhookWithManager(mgr); err != nil {
+		setupLog.Error(err, "unable to create webhook", "webhook", "DebeziumConnector")
+		os.Exit(1)
+	}
 	//+kubebuilder:scaffold:builder
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
