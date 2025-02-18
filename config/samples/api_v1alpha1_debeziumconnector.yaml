@@ -17,3 +17,4 @@ spec:
     database.server.id: "184054"
     database.server.name: my-app-connector
     database.include.list: mydb
+    

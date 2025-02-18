@@ -35,7 +35,7 @@ type DebeziumConnectorStatus struct {
 
 //+kubebuilder:object:root=true
 //+kubebuilder:subresource:status
-//+kubebuilder:webhook:path=/validate-dbc,mutating=false,failurePolicy=fail,sideEffects=None,groups=api.debezium,resources=debeziumconnectors,verbs=create;update,versions=v1alpha1,name=vdebeziumconnector,admissionReviewVersions=v1
+//+kubebuilder:webhook:path=/validate-dbc,mutating=false,failurePolicy=fail,sideEffects=None,groups=api.debezium,resources=debeziumconnectors,verbs=create;update,versions=v1alpha1,name=vdebeziumconnector.api.debezium.io,admissionReviewVersions=v1
 
 // DebeziumConnector is the Schema for the debeziumconnectors API
 type DebeziumConnector struct {

@@ -12,7 +12,7 @@ webhooks:
       namespace: system
       path: /validate-dbc
   failurePolicy: Fail
-  name: vdebeziumconnector
+  name: vdebeziumconnector.api.debezium.io
   rules:
   - apiGroups:
     - api.debezium
