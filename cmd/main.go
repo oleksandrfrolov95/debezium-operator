@@ -17,12 +17,13 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
 
-	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
-	// to ensure that exec-entrypoint and run can make use of them.
+	// Import all Kubernetes client auth plugins.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -30,18 +31,20 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	apiv1alpha1 "github.com/oleksandrfrolov95/debezium-operator/api/v1alpha1"
 	"github.com/oleksandrfrolov95/debezium-operator/internal/controller"
-	//+kubebuilder:scaffold:imports
+	"github.com/oleksandrfrolov95/debezium-operator/internal/util"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
 	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	setupLog = ctrl.Log.WithName("setup") // do not change this line
 )
 
 func init() {
@@ -59,52 +62,60 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
+		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", false,
 		"If set the metrics endpoint is served securely")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	opts := zap.Options{
-		Development: true,
-	}
+	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	ctrllog.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	// if the enable-http2 flag is false (the default), http/2 should be disabled
-	// due to its vulnerabilities.
+	// Directory where cert files will be stored.
+	const certDir = "/tmp/certs"
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		fmt.Printf("failed to create cert directory %s: %v\n", certDir, err)
+		os.Exit(1)
+	}
+
+	// Get the webhook service name and namespace from environment variables.
+	serviceName := os.Getenv("WEBHOOK_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "debezium-operator"
+	}
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "debezium-operator-ns"
+	}
+	// Build the common name.
+	commonName := fmt.Sprintf("%s.%s.svc", serviceName, namespace)
+	fmt.Printf("Using commonName: %s\n", commonName)
+
+	// Setup TLS options: disable HTTP/2 if not enabled.
 	disableHTTP2 := func(c *tls.Config) {
 		setupLog.Info("disabling http/2")
 		c.NextProtos = []string{"http/1.1"}
 	}
-	tlsOpts := []func(*tls.Config){}
+	var tlsOpts []func(*tls.Config)
 	if !enableHTTP2 {
 		tlsOpts = append(tlsOpts, disableHTTP2)
-	}
-
-	// Define a default certificate directory.
-	const defaultCertDir = "/tmp/k8s-webhook-server/serving-certs"
-	// Ensure the certificate directory exists.
-	if err := os.MkdirAll(defaultCertDir, 0755); err != nil {
-		setupLog.Error(err, "unable to create cert directory", "certDir", defaultCertDir)
-		os.Exit(1)
 	}
 
 	// Create the webhook server with the specified certificate directory.
 	webhookServer := webhook.NewServer(webhook.Options{
 		Port:    8443,
 		TLSOpts: tlsOpts,
-		CertDir: defaultCertDir,
+		CertDir: certDir,
 	})
 
+	// Create the manager using ctrl.NewManager.
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
 			BindAddress:   metricsAddr,
 			SecureServing: secureMetrics,
-			TLSOpts:       tlsOpts,
 		},
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -116,6 +127,32 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Create a direct (non-cached) client for certificate bootstrapping.
+	cfg := ctrl.GetConfigOrDie()
+	directClient, err := client.New(cfg, client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		setupLog.Error(err, "unable to create direct client")
+		os.Exit(1)
+	}
+
+	// Use the direct client to load or generate the certificate.
+	const secretName = "debezium-operator-tls"
+	ctx := context.Background()
+	if err := util.LoadOrGenerateCert(ctx, directClient, namespace, secretName, certDir, commonName); err != nil {
+		setupLog.Error(err, "failed to load or generate certificate")
+		os.Exit(1)
+	}
+
+	// Update the ValidatingWebhookConfiguration with the CA bundle from the TLS secret.
+	// This logic is now in the util package.
+	const webhookName = "vdebeziumconnector.api.debezium.io"
+	const vwcName = "debeziumconnectors-validating-webhook"
+	if err := util.UpdateWebhookCABundle(ctx, directClient, webhookName, vwcName, namespace, secretName); err != nil {
+		setupLog.Error(err, "failed to update webhook caBundle")
+		os.Exit(1)
+	}
+
+	// Setup controllers.
 	if err = (&controller.DebeziumConnectorReconciler{
 		Client:     mgr.GetClient(),
 		HTTPClient: mgr.GetHTTPClient(),
@@ -129,8 +166,8 @@ func main() {
 		setupLog.Error(err, "unable to create webhook", "webhook", "DebeziumConnector")
 		os.Exit(1)
 	}
-	//+kubebuilder:scaffold:builder
 
+	// Add health and ready checks.
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
@@ -140,7 +177,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager", "CertDir", defaultCertDir)
+	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
