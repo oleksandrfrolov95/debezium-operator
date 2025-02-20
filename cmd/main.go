@@ -78,6 +78,11 @@ func main() {
 
 	const certDir = "/tmp/certs"
 
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		fmt.Printf("failed to create cert directory %s: %v\n", certDir, err)
+		os.Exit(1)
+	}
+
 	// Get the webhook service name and namespace from environment variables.
 	serviceName := os.Getenv("WEBHOOK_SERVICE_NAME")
 	if serviceName == "" {
