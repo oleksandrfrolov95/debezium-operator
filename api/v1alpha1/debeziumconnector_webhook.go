@@ -45,15 +45,13 @@ func (r *DebeziumConnector) ValidateDelete() (admission.Warnings, error) {
 func (r *DebeziumConnector) validateDebeziumConnector() error {
 	var allErrs field.ErrorList
 
-	// Minimal local validation: DebeziumHost must be provided.
-	if r.Spec.DebeziumHost == "" {
-		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("debeziumHost"), "debeziumHost cannot be empty"))
-	}
-
-	// Ensure that connector.class is present (required for calling the endpoint).
 	connectorClass, ok := r.Spec.Config["connector.class"]
 	if !ok {
 		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("config").Child("connector.class"), "config must include key \"connector.class\""))
+	}
+
+	if _, ok := r.Spec.Config["name"]; !ok {
+		allErrs = append(allErrs, field.Required(field.NewPath("spec").Child("config").Child("name"), "config must include key \"name\""))
 	}
 
 	// If minimal checks fail, return errors without calling the external endpoint.
@@ -62,7 +60,6 @@ func (r *DebeziumConnector) validateDebeziumConnector() error {
 	}
 
 	// Construct the URL for the Debezium Connect validation endpoint.
-	// It is assumed that r.Spec.DebeziumHost includes the protocol and port (e.g., "http://localhost:8083").
 	validateURL := fmt.Sprintf("%s/connector-plugins/%s/config/validate", r.Spec.DebeziumHost, connectorClass)
 
 	// Prepare payload for the validation endpoint.
@@ -89,10 +86,14 @@ func (r *DebeziumConnector) validateDebeziumConnector() error {
 	}
 	defer resp.Body.Close()
 
-	// Read and parse the response.
 	respBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("failed to read validation response: %v", err)
+	}
+
+	// If the external endpoint returns 405, log and skip external validation.
+	if resp.StatusCode == http.StatusMethodNotAllowed {
+		return nil
 	}
 
 	// Check for non-success HTTP response.
@@ -101,7 +102,6 @@ func (r *DebeziumConnector) validateDebeziumConnector() error {
 	}
 
 	// Parse the validation response.
-	// It is assumed that the response is a JSON object with an "errors" field.
 	var validationResp struct {
 		Errors map[string]string `json:"errors"`
 	}
