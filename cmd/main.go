@@ -19,7 +19,9 @@ package main
 import (
 	"crypto/tls"
 	"flag"
+	"fmt"
 	"os"
+	"path/filepath"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
 	// to ensure that exec-entrypoint and run can make use of them.
@@ -36,6 +38,7 @@ import (
 
 	apiv1alpha1 "github.com/oleksandrfrolov95/debezium-operator/api/v1alpha1"
 	"github.com/oleksandrfrolov95/debezium-operator/internal/controller"
+	"github.com/oleksandrfrolov95/debezium-operator/internal/util"
 	//+kubebuilder:scaffold:imports
 )
 
@@ -73,6 +76,31 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	const certDir = "/tmp/certs"
+
+	// Get the webhook service name and namespace from environment variables.
+	serviceName := os.Getenv("WEBHOOK_SERVICE_NAME")
+	if serviceName == "" {
+		serviceName = "debezium-operator"
+	}
+	namespace := os.Getenv("POD_NAMESPACE")
+	if namespace == "" {
+		namespace = "debezium-operator-ns"
+	}
+	// Construct the common name.
+	commonName := fmt.Sprintf("%s.%s.svc", serviceName, namespace)
+	// Optionally log the computed common name.
+	fmt.Printf("Using commonName: %s\n", commonName)
+
+	// Check if the certificate exists; if not, generate it.
+	certFile := filepath.Join(certDir, "tls.crt")
+	if _, err := os.Stat(certFile); os.IsNotExist(err) {
+		if err := util.GenerateSelfSignedCert(certDir, commonName); err != nil {
+			fmt.Printf("failed to generate self-signed certificate: %v\n", err)
+			os.Exit(1)
+		}
+	}
+
 	// if the enable-http2 flag is false (the default), http/2 should be disabled
 	// due to its vulnerabilities.
 	disableHTTP2 := func(c *tls.Config) {
@@ -84,19 +112,11 @@ func main() {
 		tlsOpts = append(tlsOpts, disableHTTP2)
 	}
 
-	// Define a default certificate directory.
-	const defaultCertDir = "/tmp/k8s-webhook-server/serving-certs"
-	// Ensure the certificate directory exists.
-	if err := os.MkdirAll(defaultCertDir, 0755); err != nil {
-		setupLog.Error(err, "unable to create cert directory", "certDir", defaultCertDir)
-		os.Exit(1)
-	}
-
 	// Create the webhook server with the specified certificate directory.
 	webhookServer := webhook.NewServer(webhook.Options{
 		Port:    8443,
 		TLSOpts: tlsOpts,
-		CertDir: defaultCertDir,
+		CertDir: certDir,
 	})
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
@@ -140,7 +160,7 @@ func main() {
 		os.Exit(1)
 	}
 
-	setupLog.Info("starting manager", "CertDir", defaultCertDir)
+	setupLog.Info("starting manager")
 	if err := mgr.Start(ctrl.SetupSignalHandler()); err != nil {
 		setupLog.Error(err, "problem running manager")
 		os.Exit(1)
