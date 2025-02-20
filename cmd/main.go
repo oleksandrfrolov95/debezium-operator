@@ -17,14 +17,13 @@ limitations under the License.
 package main
 
 import (
+	"context"
 	"crypto/tls"
 	"flag"
 	"fmt"
 	"os"
-	"path/filepath"
 
 	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
-	// to ensure that exec-entrypoint and run can make use of them.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -38,7 +37,7 @@ import (
 
 	apiv1alpha1 "github.com/oleksandrfrolov95/debezium-operator/api/v1alpha1"
 	"github.com/oleksandrfrolov95/debezium-operator/internal/controller"
-	"github.com/oleksandrfrolov95/debezium-operator/internal/util"
+	"github.com/oleksandrfrolov95/debezium-operator/internal/util" // helper functions for certificate management
 	//+kubebuilder:scaffold:imports
 )
 
@@ -76,8 +75,10 @@ func main() {
 
 	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
+	// Directory where the webhook server will load TLS certs.
 	const certDir = "/tmp/certs"
 
+	// Create certDir if it doesn't exist.
 	if err := os.MkdirAll(certDir, 0755); err != nil {
 		fmt.Printf("failed to create cert directory %s: %v\n", certDir, err)
 		os.Exit(1)
@@ -92,35 +93,27 @@ func main() {
 	if namespace == "" {
 		namespace = "debezium-operator-ns"
 	}
-	// Construct the common name.
+	// Construct the common name dynamically.
 	commonName := fmt.Sprintf("%s.%s.svc", serviceName, namespace)
-	// Optionally log the computed common name.
 	fmt.Printf("Using commonName: %s\n", commonName)
 
-	// Check if the certificate exists; if not, generate it.
-	certFile := filepath.Join(certDir, "tls.crt")
-	if _, err := os.Stat(certFile); os.IsNotExist(err) {
-		if err := util.GenerateSelfSignedCert(certDir, commonName); err != nil {
-			fmt.Printf("failed to generate self-signed certificate: %v\n", err)
-			os.Exit(1)
-		}
-	}
+	// Define the secret name to store the TLS certificate.
+	const secretName = "debezium-operator-tls"
 
-	// if the enable-http2 flag is false (the default), http/2 should be disabled
-	// due to its vulnerabilities.
-	disableHTTP2 := func(c *tls.Config) {
-		setupLog.Info("disabling http/2")
-		c.NextProtos = []string{"http/1.1"}
-	}
-	tlsOpts := []func(*tls.Config){}
-	if !enableHTTP2 {
-		tlsOpts = append(tlsOpts, disableHTTP2)
-	}
-
-	// Create the webhook server with the specified certificate directory.
+	// Create the manager.
 	webhookServer := webhook.NewServer(webhook.Options{
-		Port:    8443,
-		TLSOpts: tlsOpts,
+		Port: 8443,
+		// TLS options: disable HTTP/2 if not enabled.
+		TLSOpts: func() []func(*tls.Config) {
+			var opts []func(*tls.Config)
+			if !enableHTTP2 {
+				opts = append(opts, func(c *tls.Config) {
+					setupLog.Info("disabling http/2")
+					c.NextProtos = []string{"http/1.1"}
+				})
+			}
+			return opts
+		}(),
 		CertDir: certDir,
 	})
 
@@ -129,7 +122,6 @@ func main() {
 		Metrics: metricsserver.Options{
 			BindAddress:   metricsAddr,
 			SecureServing: secureMetrics,
-			TLSOpts:       tlsOpts,
 		},
 		WebhookServer:          webhookServer,
 		HealthProbeBindAddress: probeAddr,
@@ -141,6 +133,14 @@ func main() {
 		os.Exit(1)
 	}
 
+	// Use the manager's client to check for or generate the certificate, and write it to a Kubernetes secret.
+	ctx := context.Background()
+	if err := util.LoadOrGenerateCert(ctx, mgr.GetClient(), namespace, secretName, certDir, commonName); err != nil {
+		setupLog.Error(err, "failed to load or generate certificate")
+		os.Exit(1)
+	}
+
+	// Setup controllers.
 	if err = (&controller.DebeziumConnectorReconciler{
 		Client:     mgr.GetClient(),
 		HTTPClient: mgr.GetHTTPClient(),

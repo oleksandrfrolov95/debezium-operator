@@ -10,7 +10,7 @@ webhooks:
     service:
       name: webhook-service
       namespace: system
-      path: /validate-dbc
+      path: /validate-api-debezium-v1alpha1-debeziumconnector
   failurePolicy: Fail
   name: vdebeziumconnector.api.debezium.io
   rules:

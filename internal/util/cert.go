@@ -1,6 +1,7 @@
 package util
 
 import (
+	"context"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -11,26 +12,31 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
-// generateSelfSignedCert generates a self‑signed certificate if one doesn’t exist.
+// GenerateSelfSignedCert generates a new self-signed certificate and writes the files to certDir.
 func GenerateSelfSignedCert(certDir, commonName string) error {
 	keyPath := filepath.Join(certDir, "tls.key")
 	certPath := filepath.Join(certDir, "tls.crt")
 
-	// Generate RSA private key.
+	// Generate a new RSA private key.
 	priv, err := rsa.GenerateKey(rand.Reader, 2048)
 	if err != nil {
 		return fmt.Errorf("failed to generate private key: %w", err)
 	}
 
-	// Create certificate template.
+	// Create a certificate template with SANs.
 	template := x509.Certificate{
 		SerialNumber: big.NewInt(time.Now().UnixNano()),
 		Subject: pkix.Name{
 			CommonName: commonName,
 		},
-		DNSNames:              []string{commonName}, // include the SAN(s)
+		DNSNames:              []string{commonName},
 		NotBefore:             time.Now(),
 		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // 1 year validity
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
@@ -38,13 +44,13 @@ func GenerateSelfSignedCert(certDir, commonName string) error {
 		BasicConstraintsValid: true,
 	}
 
-	// Create the self-signed certificate.
+	// Self-sign the certificate.
 	derBytes, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
 	if err != nil {
 		return fmt.Errorf("failed to create certificate: %w", err)
 	}
 
-	// Write certificate.
+	// Write certificate to file.
 	certOut, err := os.Create(certPath)
 	if err != nil {
 		return fmt.Errorf("failed to open %s for writing: %w", certPath, err)
@@ -54,7 +60,7 @@ func GenerateSelfSignedCert(certDir, commonName string) error {
 		return fmt.Errorf("failed to write certificate to %s: %w", certPath, err)
 	}
 
-	// Write private key.
+	// Write private key to file.
 	keyOut, err := os.Create(keyPath)
 	if err != nil {
 		return fmt.Errorf("failed to open %s for writing: %w", keyPath, err)
@@ -65,4 +71,72 @@ func GenerateSelfSignedCert(certDir, commonName string) error {
 	}
 
 	return nil
+}
+
+// writeCertFiles writes certificate and key data into files in certDir using os.WriteFile.
+func writeCertFiles(certDir string, certData, keyData []byte) error {
+	certPath := filepath.Join(certDir, "tls.crt")
+	keyPath := filepath.Join(certDir, "tls.key")
+
+	if err := os.WriteFile(certPath, certData, 0644); err != nil {
+		return fmt.Errorf("failed to write certificate to %s: %w", certPath, err)
+	}
+	if err := os.WriteFile(keyPath, keyData, 0600); err != nil {
+		return fmt.Errorf("failed to write key to %s: %w", keyPath, err)
+	}
+	return nil
+}
+
+// LoadOrGenerateCert checks for an existing cert secret and writes its contents to certDir.
+// If the secret doesn't exist, it generates a new certificate and creates the secret.
+func LoadOrGenerateCert(ctx context.Context, c client.Client, namespace, secretName, certDir, commonName string) error {
+	// Ensure the cert directory exists.
+	if err := os.MkdirAll(certDir, 0755); err != nil {
+		return fmt.Errorf("failed to create cert directory %s: %w", certDir, err)
+	}
+
+	secret := &corev1.Secret{}
+	err := c.Get(ctx, client.ObjectKey{Namespace: namespace, Name: secretName}, secret)
+	if err == nil {
+		// Secret exists; extract certificate and key.
+		certData, certOk := secret.Data["tls.crt"]
+		keyData, keyOk := secret.Data["tls.key"]
+		if !certOk || !keyOk {
+			return fmt.Errorf("secret %s exists but does not contain tls.crt and tls.key", secretName)
+		}
+		// Write certificate and key files to certDir.
+		return writeCertFiles(certDir, certData, keyData)
+	} else if apierrors.IsNotFound(err) {
+		// Secret does not exist; generate a new certificate.
+		if err := GenerateSelfSignedCert(certDir, commonName); err != nil {
+			return fmt.Errorf("failed to generate self-signed certificate: %w", err)
+		}
+		// Read the generated certificate and key.
+		certData, err := os.ReadFile(filepath.Join(certDir, "tls.crt"))
+		if err != nil {
+			return fmt.Errorf("failed to read generated certificate: %w", err)
+		}
+		keyData, err := os.ReadFile(filepath.Join(certDir, "tls.key"))
+		if err != nil {
+			return fmt.Errorf("failed to read generated key: %w", err)
+		}
+		// Create the certificate secret.
+		newSecret := &corev1.Secret{
+			ObjectMeta: metav1.ObjectMeta{
+				Name:      secretName,
+				Namespace: namespace,
+			},
+			Data: map[string][]byte{
+				"tls.crt": certData,
+				"tls.key": keyData,
+			},
+			Type: corev1.SecretTypeTLS,
+		}
+		if err := c.Create(ctx, newSecret); err != nil {
+			return fmt.Errorf("failed to create certificate secret: %w", err)
+		}
+		return nil
+	} else {
+		return fmt.Errorf("failed to get certificate secret: %w", err)
+	}
 }
