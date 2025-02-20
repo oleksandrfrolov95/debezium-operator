@@ -23,7 +23,7 @@ import (
 	"fmt"
 	"os"
 
-	// Import all Kubernetes client auth plugins (e.g. Azure, GCP, OIDC, etc.)
+	// Import all Kubernetes client auth plugins.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -31,14 +31,15 @@ import (
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
+	ctrllog "sigs.k8s.io/controller-runtime/pkg/log"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
 	"sigs.k8s.io/controller-runtime/pkg/webhook"
 
 	apiv1alpha1 "github.com/oleksandrfrolov95/debezium-operator/api/v1alpha1"
 	"github.com/oleksandrfrolov95/debezium-operator/internal/controller"
-	"github.com/oleksandrfrolov95/debezium-operator/internal/util" // helper functions for certificate management
-	//+kubebuilder:scaffold:imports
+	"github.com/oleksandrfrolov95/debezium-operator/internal/util"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -61,24 +62,19 @@ func main() {
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "The address the metric endpoint binds to.")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "The address the probe endpoint binds to.")
 	flag.BoolVar(&enableLeaderElection, "leader-elect", false,
-		"Enable leader election for controller manager. "+
-			"Enabling this will ensure there is only one active controller manager.")
+		"Enable leader election for controller manager. Enabling this will ensure there is only one active controller manager.")
 	flag.BoolVar(&secureMetrics, "metrics-secure", false,
 		"If set the metrics endpoint is served securely")
 	flag.BoolVar(&enableHTTP2, "enable-http2", false,
 		"If set, HTTP/2 will be enabled for the metrics and webhook servers")
-	opts := zap.Options{
-		Development: true,
-	}
+	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	ctrllog.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
 
-	// Directory where the webhook server will load TLS certs.
+	// Directory where cert files will be stored.
 	const certDir = "/tmp/certs"
-
-	// Create certDir if it doesn't exist.
 	if err := os.MkdirAll(certDir, 0755); err != nil {
 		fmt.Printf("failed to create cert directory %s: %v\n", certDir, err)
 		os.Exit(1)
@@ -93,30 +89,28 @@ func main() {
 	if namespace == "" {
 		namespace = "debezium-operator-ns"
 	}
-	// Construct the common name dynamically.
+	// Build the common name.
 	commonName := fmt.Sprintf("%s.%s.svc", serviceName, namespace)
 	fmt.Printf("Using commonName: %s\n", commonName)
 
-	// Define the secret name to store the TLS certificate.
-	const secretName = "debezium-operator-tls"
+	// Setup TLS options: disable HTTP/2 if not enabled.
+	disableHTTP2 := func(c *tls.Config) {
+		setupLog.Info("disabling http/2")
+		c.NextProtos = []string{"http/1.1"}
+	}
+	var tlsOpts []func(*tls.Config)
+	if !enableHTTP2 {
+		tlsOpts = append(tlsOpts, disableHTTP2)
+	}
 
-	// Create the manager.
+	// Create the webhook server with the specified certificate directory.
 	webhookServer := webhook.NewServer(webhook.Options{
-		Port: 8443,
-		// TLS options: disable HTTP/2 if not enabled.
-		TLSOpts: func() []func(*tls.Config) {
-			var opts []func(*tls.Config)
-			if !enableHTTP2 {
-				opts = append(opts, func(c *tls.Config) {
-					setupLog.Info("disabling http/2")
-					c.NextProtos = []string{"http/1.1"}
-				})
-			}
-			return opts
-		}(),
+		Port:    8443,
+		TLSOpts: tlsOpts,
 		CertDir: certDir,
 	})
 
+	// Create the manager using ctrl.NewManager.
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme: scheme,
 		Metrics: metricsserver.Options{
@@ -133,9 +127,18 @@ func main() {
 		os.Exit(1)
 	}
 
-	// Use the manager's client to check for or generate the certificate, and write it to a Kubernetes secret.
+	// Create a direct (non-cached) client for certificate bootstrapping.
+	cfg := ctrl.GetConfigOrDie()
+	directClient, err := client.New(cfg, client.Options{Scheme: mgr.GetScheme()})
+	if err != nil {
+		setupLog.Error(err, "unable to create direct client")
+		os.Exit(1)
+	}
+
+	// Use the direct client to load or generate the certificate.
+	const secretName = "debezium-operator-tls"
 	ctx := context.Background()
-	if err := util.LoadOrGenerateCert(ctx, mgr.GetClient(), namespace, secretName, certDir, commonName); err != nil {
+	if err := util.LoadOrGenerateCert(ctx, directClient, namespace, secretName, certDir, commonName); err != nil {
 		setupLog.Error(err, "failed to load or generate certificate")
 		os.Exit(1)
 	}
@@ -154,8 +157,8 @@ func main() {
 		setupLog.Error(err, "unable to create webhook", "webhook", "DebeziumConnector")
 		os.Exit(1)
 	}
-	//+kubebuilder:scaffold:builder
 
+	// Add health and ready checks.
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {
 		setupLog.Error(err, "unable to set up health check")
 		os.Exit(1)
