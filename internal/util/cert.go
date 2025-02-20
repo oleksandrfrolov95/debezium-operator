@@ -30,8 +30,9 @@ func GenerateSelfSignedCert(certDir, commonName string) error {
 		Subject: pkix.Name{
 			CommonName: commonName,
 		},
+		DNSNames:              []string{commonName}, // include the SAN(s)
 		NotBefore:             time.Now(),
-		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // 1 year
+		NotAfter:              time.Now().Add(365 * 24 * time.Hour), // 1 year validity
 		KeyUsage:              x509.KeyUsageDigitalSignature | x509.KeyUsageKeyEncipherment,
 		ExtKeyUsage:           []x509.ExtKeyUsage{x509.ExtKeyUsageServerAuth},
 		BasicConstraintsValid: true,
