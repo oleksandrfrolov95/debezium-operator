@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"time"
 
+	admissionregistrationv1 "k8s.io/api/admissionregistration/v1"
 	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -139,4 +140,41 @@ func LoadOrGenerateCert(ctx context.Context, c client.Client, namespace, secretN
 	} else {
 		return fmt.Errorf("failed to get certificate secret: %w", err)
 	}
+}
+
+func UpdateWebhookCABundle(ctx context.Context, c client.Client, webhookName string, vwcName string, secretNamespace, secretName string) error {
+	// Retrieve the TLS secret.
+	secret := &corev1.Secret{}
+	if err := c.Get(ctx, client.ObjectKey{Namespace: secretNamespace, Name: secretName}, secret); err != nil {
+		return fmt.Errorf("failed to get secret %s/%s: %w", secretNamespace, secretName, err)
+	}
+	caBundle, ok := secret.Data["tls.crt"]
+	if !ok || len(caBundle) == 0 {
+		return fmt.Errorf("secret %s/%s does not contain a valid tls.crt", secretNamespace, secretName)
+	}
+
+	// Retrieve the ValidatingWebhookConfiguration.
+	vwc := &admissionregistrationv1.ValidatingWebhookConfiguration{}
+	if err := c.Get(ctx, client.ObjectKey{Name: vwcName}, vwc); err != nil {
+		return fmt.Errorf("failed to get ValidatingWebhookConfiguration %s: %w", vwcName, err)
+	}
+
+	// Update the CA bundle for the webhook matching webhookName.
+	updated := false
+	for i, wh := range vwc.Webhooks {
+		if wh.Name == webhookName {
+			vwc.Webhooks[i].ClientConfig.CABundle = caBundle
+			updated = true
+		}
+	}
+	if !updated {
+		return fmt.Errorf("webhook with name %q not found in ValidatingWebhookConfiguration %s", webhookName, vwcName)
+	}
+
+	// Apply the update.
+	// You can use Update() or Patch() here; we'll use Update() for simplicity.
+	if err := c.Update(ctx, vwc); err != nil {
+		return fmt.Errorf("failed to update ValidatingWebhookConfiguration %s: %w", vwcName, err)
+	}
+	return nil
 }

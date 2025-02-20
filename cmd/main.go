@@ -44,7 +44,7 @@ import (
 
 var (
 	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup")
+	setupLog = ctrl.Log.WithName("setup") // do not change this line
 )
 
 func init() {
@@ -140,6 +140,15 @@ func main() {
 	ctx := context.Background()
 	if err := util.LoadOrGenerateCert(ctx, directClient, namespace, secretName, certDir, commonName); err != nil {
 		setupLog.Error(err, "failed to load or generate certificate")
+		os.Exit(1)
+	}
+
+	// Update the ValidatingWebhookConfiguration with the CA bundle from the TLS secret.
+	// This logic is now in the util package.
+	const webhookName = "vdebeziumconnector.api.debezium.io"
+	const vwcName = "debeziumconnectors-validating-webhook"
+	if err := util.UpdateWebhookCABundle(ctx, directClient, webhookName, vwcName, namespace, secretName); err != nil {
+		setupLog.Error(err, "failed to update webhook caBundle")
 		os.Exit(1)
 	}
 
