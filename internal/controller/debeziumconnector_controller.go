@@ -52,7 +52,6 @@ const debeziumFinalizer = "debeziumconnector.finalizers.api.debezium"
 
 func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
 	logger := log.FromContext(ctx)
-	logger.Info("Reconciling DebeziumConnector")
 
 	dbc := &apiv1alpha1.DebeziumConnector{}
 	if err := r.Get(ctx, req.NamespacedName, dbc); err != nil {
