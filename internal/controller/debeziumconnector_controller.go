@@ -32,6 +32,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/log"
 
 	apiv1alpha1 "github.com/oleksandrfrolov95/debezium-operator/api/v1alpha1"
+	"github.com/oleksandrfrolov95/debezium-operator/internal/util"
 )
 
 // DebeziumConnectorReconciler reconciles a DebeziumConnector object
@@ -63,7 +64,7 @@ func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		return ctrl.Result{}, err
 	}
 
-	// Initialize HTTP client if not already set
+	// Initialize HTTP client if not already set.
 	if r.HTTPClient == nil {
 		r.HTTPClient = &http.Client{Timeout: 10 * time.Second}
 	}
@@ -106,13 +107,22 @@ func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 		}
 		logger.Info("Debezium connector created", "name", dbc.Spec.Config["name"])
 	} else {
-		// If the connector exists—whether created externally or by this operator—
-		// update it with the configuration from the CR.
-		if err := r.updateDebeziumConnector(dbc.Spec.DebeziumHost, dbc.Spec.Config); err != nil {
-			logger.Error(err, "failed to update connector")
+		// The connector exists: check if its configuration matches the CR spec.
+		externalConfig, err := r.getDebeziumConnectorConfig(dbc.Spec.DebeziumHost, dbc.Spec.Config["name"])
+		if err != nil {
+			logger.Error(err, "failed to get external connector configuration")
 			return ctrl.Result{}, err
 		}
-		logger.Info("Debezium connector updated", "name", dbc.Spec.Config["name"])
+		if !util.ConfigsEqual(externalConfig, dbc.Spec.Config) {
+			// External configuration does not match; update it to match the CR.
+			if err := r.updateDebeziumConnector(dbc.Spec.DebeziumHost, dbc.Spec.Config); err != nil {
+				logger.Error(err, "failed to update connector")
+				return ctrl.Result{}, err
+			}
+			logger.Info("Debezium connector updated to match CR", "name", dbc.Spec.Config["name"])
+		} else {
+			logger.Info("Debezium connector configuration is in sync", "name", dbc.Spec.Config["name"])
+		}
 	}
 
 	return ctrl.Result{}, nil
@@ -139,6 +149,25 @@ func (r *DebeziumConnectorReconciler) connectorExists(host, name string) (bool, 
 	// For any other status, read the response for debugging.
 	body, _ := io.ReadAll(resp.Body)
 	return false, fmt.Errorf("unexpected response: %d, body: %s", resp.StatusCode, string(body))
+}
+
+// getDebeziumConnectorConfig retrieves the current configuration of a connector from Debezium Connect.
+func (r *DebeziumConnectorReconciler) getDebeziumConnectorConfig(host, name string) (map[string]string, error) {
+	url := fmt.Sprintf("%s/connectors/%s/config", host, name)
+	resp, err := r.HTTPClient.Get(url)
+	if err != nil {
+		return nil, fmt.Errorf("failed to GET connector config: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("GET connector config returned status %d: %s", resp.StatusCode, string(body))
+	}
+	var config map[string]string
+	if err := json.NewDecoder(resp.Body).Decode(&config); err != nil {
+		return nil, fmt.Errorf("failed to decode connector config: %w", err)
+	}
+	return config, nil
 }
 
 // createDebeziumConnector sends a POST request to create a new connector.

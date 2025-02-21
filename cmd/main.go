@@ -44,7 +44,7 @@ import (
 
 var (
 	scheme   = runtime.NewScheme()
-	setupLog = ctrl.Log.WithName("setup") // do not change this line
+	setupLog = ctrl.Log.WithName("setup")
 )
 
 func init() {
