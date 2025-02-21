@@ -74,7 +74,7 @@ func GenerateSelfSignedCert(certDir, commonName string) error {
 	return nil
 }
 
-// writeCertFiles writes certificate and key data into files in certDir using os.WriteFile.
+// writeCertFiles writes certificate and key data into files in certDir.
 func writeCertFiles(certDir string, certData, keyData []byte) error {
 	certPath := filepath.Join(certDir, "tls.crt")
 	keyPath := filepath.Join(certDir, "tls.key")
@@ -172,7 +172,6 @@ func UpdateWebhookCABundle(ctx context.Context, c client.Client, webhookName str
 	}
 
 	// Apply the update.
-	// You can use Update() or Patch() here; we'll use Update() for simplicity.
 	if err := c.Update(ctx, vwc); err != nil {
 		return fmt.Errorf("failed to update ValidatingWebhookConfiguration %s: %w", vwcName, err)
 	}

@@ -120,12 +120,10 @@ func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 				return ctrl.Result{}, err
 			}
 			logger.Info("Debezium connector updated to match CR", "name", dbc.Spec.Config["name"])
-		} else {
-			logger.Info("Debezium connector configuration is in sync", "name", dbc.Spec.Config["name"])
 		}
 	}
 
-	return ctrl.Result{}, nil
+	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
 }
 
 // connectorExists checks if a connector with the given name exists on the Debezium host.
@@ -151,7 +149,7 @@ func (r *DebeziumConnectorReconciler) connectorExists(host, name string) (bool, 
 	return false, fmt.Errorf("unexpected response: %d, body: %s", resp.StatusCode, string(body))
 }
 
-// getDebeziumConnectorConfig retrieves the current configuration of a connector from Debezium Connect.
+// getDebeziumConnectorConfig sends a GET request to retrieves the current configuration.
 func (r *DebeziumConnectorReconciler) getDebeziumConnectorConfig(host, name string) (map[string]string, error) {
 	url := fmt.Sprintf("%s/connectors/%s/config", host, name)
 	resp, err := r.HTTPClient.Get(url)

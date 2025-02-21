@@ -23,7 +23,6 @@ import (
 	"fmt"
 	"os"
 
-	// Import all Kubernetes client auth plugins.
 	_ "k8s.io/client-go/plugin/pkg/client/auth"
 
 	"k8s.io/apimachinery/pkg/runtime"
@@ -144,7 +143,6 @@ func main() {
 	}
 
 	// Update the ValidatingWebhookConfiguration with the CA bundle from the TLS secret.
-	// This logic is now in the util package.
 	const webhookName = "vdebeziumconnector.api.debezium.io"
 	const vwcName = "debeziumconnectors-validating-webhook"
 	if err := util.UpdateWebhookCABundle(ctx, directClient, webhookName, vwcName, namespace, secretName); err != nil {
