@@ -260,7 +260,7 @@ func (r *DebeziumConnectorReconciler) deleteDebeziumConnector(host, name string)
 	return nil
 }
 
-// getDebeziumConnectorStatet sends an GET to retrieves the connector state.
+// getDebeziumConnectorState sends an GET to retrieves the connector state.
 func (r *DebeziumConnectorReconciler) getDebeziumConnectorState(host, name string) (string, error) {
 	url := fmt.Sprintf("%s/connectors/%s/status", host, name)
 	resp, err := r.HTTPClient.Get(url)
