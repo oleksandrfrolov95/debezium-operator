@@ -30,7 +30,7 @@ type DebeziumConnectorSpec struct {
 
 // DebeziumConnectorStatus defines the observed state of DebeziumConnector
 type DebeziumConnectorStatus struct {
-	Conditions []metav1.Condition `json:"conditions,omitempty"`
+	ConnectorStatus string `json:"connectorStatus,omitempty"`
 }
 
 //+kubebuilder:object:root=true

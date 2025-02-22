@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -120,6 +121,30 @@ func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 			}
 			logger.Info("Debezium connector updated to match CR", "name", dbc.Spec.Config["name"])
 		}
+	}
+
+	// Retrieve the connector state.
+	state, err := r.getDebeziumConnectorState(dbc.Spec.DebeziumHost, dbc.Spec.Config["name"])
+	if err != nil {
+		logger.Error(err, "failed to get connector state")
+		// If state cannot be determined, mark as UNKNOWN.
+		state = "UNKNOWN"
+	}
+
+	// Update the CR status with the state.
+	dbc.Status.ConnectorStatus = state
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &apiv1alpha1.DebeziumConnector{}
+		if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
+			return err
+		}
+		latest.Status.ConnectorStatus = state
+		return r.Status().Update(ctx, latest)
+	})
+	if err != nil {
+		logger.Error(err, "failed to update DebeziumConnector status")
+		return ctrl.Result{}, err
 	}
 
 	return ctrl.Result{RequeueAfter: 60 * time.Second}, nil
@@ -233,6 +258,29 @@ func (r *DebeziumConnectorReconciler) deleteDebeziumConnector(host, name string)
 		return fmt.Errorf("failed to delete connector, status: %d, body: %s", resp.StatusCode, string(body))
 	}
 	return nil
+}
+
+// getDebeziumConnectorStatet sends an GET to retrieves the connector state.
+func (r *DebeziumConnectorReconciler) getDebeziumConnectorState(host, name string) (string, error) {
+	url := fmt.Sprintf("%s/connectors/%s/status", host, name)
+	resp, err := r.HTTPClient.Get(url)
+	if err != nil {
+		return "", fmt.Errorf("failed to GET connector status: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return "", fmt.Errorf("GET connector status returned status %d: %s", resp.StatusCode, string(body))
+	}
+	var statusResp struct {
+		Connector struct {
+			State string `json:"state"`
+		} `json:"connector"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&statusResp); err != nil {
+		return "", fmt.Errorf("failed to decode connector status response: %w", err)
+	}
+	return statusResp.Connector.State, nil
 }
 
 // SetupWithManager sets up the controller with the Manager.
