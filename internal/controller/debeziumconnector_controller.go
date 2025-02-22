@@ -26,6 +26,7 @@ import (
 	"time"
 
 	"k8s.io/apimachinery/pkg/api/errors"
+	"k8s.io/client-go/util/retry"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
@@ -132,7 +133,16 @@ func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 
 	// Update the CR status with the state.
 	dbc.Status.ConnectorStatus = state
-	if err := r.Status().Update(ctx, dbc); err != nil {
+
+	err = retry.RetryOnConflict(retry.DefaultRetry, func() error {
+		latest := &apiv1alpha1.DebeziumConnector{}
+		if err := r.Get(ctx, req.NamespacedName, latest); err != nil {
+			return err
+		}
+		latest.Status.ConnectorStatus = state
+		return r.Status().Update(ctx, latest)
+	})
+	if err != nil {
 		logger.Error(err, "failed to update DebeziumConnector status")
 		return ctrl.Result{}, err
 	}
