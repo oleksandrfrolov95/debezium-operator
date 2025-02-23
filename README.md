@@ -29,7 +29,11 @@ Installation
 
 ### Using Helm
 
-TODO
+*   Download helm chart (https://github.com/oleksandrfrolov95/debezium-operator/releases)
+*   Install chart to Kubernetes cluster
+    ```
+    helm install debezium-operator . --namespace debezium-operator-ns --create-namespace
+    ```
     
 Custom Resource Definition
 --------------------------
