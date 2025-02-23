@@ -126,7 +126,6 @@ func (r *DebeziumConnectorReconciler) Reconcile(ctx context.Context, req ctrl.Re
 	// Retrieve the connector state.
 	state, err := r.getDebeziumConnectorState(dbc.Spec.DebeziumHost, dbc.Spec.Config["name"])
 	if err != nil {
-		logger.Error(err, "failed to get connector state")
 		// If state cannot be determined, mark as UNKNOWN.
 		state = "UNKNOWN"
 	}
